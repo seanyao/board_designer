@@ -141,6 +141,31 @@
         border:1px solid #999;
         font-weight:bold;
     }
+        /* 右键菜单 */
+        .context-menu{
+        position:fixed;
+        background:#fff;
+        border:1px solid #ccc;
+        border-radius:4px;
+        box-shadow:0 2px 10px rgba(0,0,0,.2);
+        padding:5px 0;
+        z-index:1001;
+        display:none;
+        min-width:150px;
+    }
+    .context-menu-item{
+        padding:8px 15px;
+        cursor:pointer;
+        font-size:14px;
+        border-bottom:1px solid #eee;
+    }
+    .context-menu-item:last-child{
+        border-bottom:none;
+    }
+    .context-menu-item:hover{
+        background:#f5f5f5;
+    }
+
 </style>
 </head>
 <body>
@@ -156,7 +181,52 @@
     <button onclick="closeSelectionMenu()">取消</button>
 </div>
 
+<!-- 右键菜单 -->
+<div class="context-menu" id="contextMenu">
+    <div class="context-menu-item" onclick="createHoleGroupFromContext()">创建孔位组</div>
+    <div class="context-menu-item" onclick="createPartFromContext()">创建零件</div>
+</div>
+
 <script>
+    /* ---------- 右键菜单管理 ---------- */
+function showContextMenu(e) {
+    e.preventDefault(); // 阻止默认右键菜单
+    
+    const rect = canvas.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    x = Math.round(x / grid) * grid;
+    y = Math.round(y / grid) * grid;
+    
+    pendingPosition = {x, y};
+    
+    const contextMenu = document.getElementById('contextMenu');
+    contextMenu.style.display = 'block';
+    contextMenu.style.left = e.clientX + 'px';
+    contextMenu.style.top = e.clientY + 'px';
+}
+
+function hideContextMenu() {
+    document.getElementById('contextMenu').style.display = 'none';
+}
+
+function createHoleGroupFromContext() {
+    if (pendingPosition) {
+        const color = colors[(groupId) % colors.length];
+        createHoleGroup(pendingPosition.x, pendingPosition.y, color);
+        updateCanvasSizeLabels();
+        hideContextMenu();
+    }
+}
+
+function createPartFromContext() {
+    if (pendingPosition) {
+        createPart(pendingPosition.x, pendingPosition.y);
+        updateCanvasSizeLabels();
+        hideContextMenu();
+    }
+}
+
 const canvas   = document.getElementById('canvas');
 const wrapper  = document.querySelector('.wrapper');
 const mmPerPx = 25.4 / 96;
@@ -482,16 +552,13 @@ function enablePartResize(part) {
     });
 }
 
-/* ---------- 双击新建组 ---------- */
-canvas.addEventListener('dblclick', e => {
-    const rect = canvas.getBoundingClientRect();
-    let x = e.clientX - rect.left;
-    let y = e.clientY - rect.top;
-    x = Math.round(x / grid) * grid;
-    y = Math.round(y / grid) * grid;
-    
-    // 显示选择菜单而不是直接创建
-    showSelectionMenu(x, y);
+/* ---------- 右键新建 ---------- */
+canvas.addEventListener('contextmenu', showContextMenu);
+
+// 点击其他地方隐藏右键菜单
+document.addEventListener('click', hideContextMenu);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideContextMenu();
 });
 
 /* ---------- 初始示例组 ---------- */
