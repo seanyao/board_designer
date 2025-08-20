@@ -68,11 +68,78 @@
         z-index:20;
     }
     
+    /* 选择菜单 */
+    .selection-menu{
+        position:fixed;
+        top:50%;
+        left:50%;
+        transform:translate(-50%,-50%);
+        background:#fff;
+        border:2px solid #333;
+        border-radius:8px;
+        padding:20px;
+        box-shadow:0 4px 20px rgba(0,0,0,.3);
+        z-index:1000;
+        display:none;
+    }
+    .selection-menu h3{
+        margin:0 0 15px 0;
+        color:#333;
+        text-align:center;
+    }
+    .selection-menu button{
+        display:block;
+        width:200px;
+        margin:10px 0;
+        padding:12px;
+        border:1px solid #ddd;
+        border-radius:4px;
+        background:#f8f9fa;
+        cursor:pointer;
+        font-size:14px;
+        transition:all .2s;
+    }
+    .selection-menu button:hover{
+        background:#e9ecef;
+        border-color:#adb5bd;
+    }
+    .selection-menu button:active{
+        background:#dee2e6;
+    }
+    /* 零件矩形 */
+    .part-rectangle{
+        position:absolute;
+        background:rgba(128,128,128,0.6);
+        border:2px solid #666;
+        cursor:move;
+        user-select:none;
+    }
+    /* 零件调整手柄 */
+    .resize-handle{
+        position:absolute;
+        width:8px;
+        height:8px;
+        background:#fff;
+        border:1px solid #333;
+        cursor:pointer;
+    }
+    .resize-handle.nw{top:-4px;left:-4px;cursor:nw-resize;}
+    .resize-handle.ne{top:-4px;right:-4px;cursor:ne-resize;}
+    .resize-handle.sw{bottom:-4px;left:-4px;cursor:sw-resize;}
+    .resize-handle.se{bottom:-4px;right:-4px;cursor:se-resize;}
 </style>
 </head>
 <body>
 <div class="wrapper">
     <div class="canvas" id="canvas"></div>
+</div>
+
+<!-- 选择菜单 -->
+<div class="selection-menu" id="selectionMenu">
+    <h3>选择创建类型</h3>
+    <button onclick="createHoleGroupFromMenu()">一组孔位（4个）</button>
+    <button onclick="createPartFromMenu()">一个零件</button>
+    <button onclick="closeSelectionMenu()">取消</button>
 </div>
 
 <script>
@@ -81,6 +148,8 @@ const wrapper  = document.querySelector('.wrapper');
 const mmPerPx = 25.4 / 96;
 const grid    = 5 / mmPerPx;          // 5 mm 网格
 let groupId   = 0;                    // 组计数
+let partId    = 0;                    // 零件计数
+let pendingPosition = null;           // 待创建位置
 const colors  = ['#e00','#007bff','#28a745','#fd7e14','#6f42c1','#20c997']; // 循环色
 
 /* ---------- 工具 ---------- */
@@ -221,16 +290,169 @@ function enableDrag(group){
     });
 }
 
+/* ---------- 选择菜单管理 ---------- */
+function showSelectionMenu(x, y) {
+    pendingPosition = {x, y};
+    document.getElementById('selectionMenu').style.display = 'block';
+}
+
+function closeSelectionMenu() {
+    document.getElementById('selectionMenu').style.display = 'none';
+    pendingPosition = null;
+}
+
+function createHoleGroupFromMenu() {
+    if (pendingPosition) {
+        const color = colors[(groupId) % colors.length];
+        createHoleGroup(pendingPosition.x, pendingPosition.y, color);
+        updateCanvasSizeLabels();
+        closeSelectionMenu();
+    }
+}
+
+function createPartFromMenu() {
+    if (pendingPosition) {
+        createPart(pendingPosition.x, pendingPosition.y);
+        updateCanvasSizeLabels();
+        closeSelectionMenu();
+    }
+}
+
+/* ---------- 创建零件 ---------- */
+function createPart(x0, y0) {
+    const pid = ++partId;
+    const part = document.createElement('div');
+    part.className = 'part-rectangle';
+    part.id = 'p' + pid;
+    part.style.left = x0 + 'px';
+    part.style.top = y0 + 'px';
+    part.style.width = '60px';
+    part.style.height = '40px';
+    canvas.appendChild(part);
+
+    // 添加调整手柄
+    const handles = ['nw', 'ne', 'sw', 'se'];
+    handles.forEach(pos => {
+        const handle = document.createElement('div');
+        handle.className = `resize-handle ${pos}`;
+        part.appendChild(handle);
+    });
+
+    enablePartDrag(part);
+    enablePartResize(part);
+}
+
+/* ---------- 零件拖拽 ---------- */
+function enablePartDrag(part) {
+    let active = false, ox = 0, oy = 0;
+    
+    part.addEventListener('mousedown', e => {
+        if (e.target.classList.contains('resize-handle')) return;
+        active = true;
+        e.stopPropagation();
+        const rect = canvas.getBoundingClientRect();
+        ox = e.clientX - rect.left - part.offsetLeft;
+        oy = e.clientY - rect.top - part.offsetTop;
+    });
+
+    window.addEventListener('mousemove', e => {
+        if (!active) return;
+        const rect = canvas.getBoundingClientRect();
+        let x = e.clientX - rect.left - ox;
+        let y = e.clientY - rect.top - oy;
+
+        x = Math.max(0, Math.min(x, rect.width - part.offsetWidth));
+        y = Math.max(0, Math.min(y, rect.height - part.offsetHeight));
+
+        x = Math.round(x / grid) * grid;
+        y = Math.round(y / grid) * grid;
+
+        part.style.left = x + 'px';
+        part.style.top = y + 'px';
+    });
+
+    window.addEventListener('mouseup', () => active = false);
+}
+
+/* ---------- 零件大小调整 ---------- */
+function enablePartResize(part) {
+    const handles = part.querySelectorAll('.resize-handle');
+    
+    handles.forEach(handle => {
+        let active = false, startX = 0, startY = 0, startWidth = 0, startHeight = 0, startLeft = 0, startTop = 0;
+        
+        handle.addEventListener('mousedown', e => {
+            active = true;
+            e.stopPropagation();
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = part.offsetWidth;
+            startHeight = part.offsetHeight;
+            startLeft = part.offsetLeft;
+            startTop = part.offsetTop;
+        });
+
+        window.addEventListener('mousemove', e => {
+            if (!active) return;
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            let newWidth = startWidth;
+            let newHeight = startHeight;
+            let newLeft = startLeft;
+            let newTop = startTop;
+
+            if (handle.classList.contains('se')) {
+                newWidth = Math.max(20, startWidth + deltaX);
+                newHeight = Math.max(20, startHeight + deltaY);
+            } else if (handle.classList.contains('sw')) {
+                newWidth = Math.max(20, startWidth - deltaX);
+                newHeight = Math.max(20, startHeight + deltaY);
+                newLeft = startLeft + startWidth - newWidth;
+            } else if (handle.classList.contains('ne')) {
+                newWidth = Math.max(20, startWidth + deltaX);
+                newHeight = Math.max(20, startHeight - deltaY);
+                newTop = startTop + startHeight - newHeight;
+            } else if (handle.classList.contains('nw')) {
+                newWidth = Math.max(20, startWidth - deltaX);
+                newHeight = Math.max(20, startHeight - deltaY);
+                newLeft = startLeft + startWidth - newWidth;
+                newTop = startTop + startHeight - newHeight;
+            }
+
+            // 网格对齐
+            newWidth = Math.round(newWidth / grid) * grid;
+            newHeight = Math.round(newHeight / grid) * grid;
+            newLeft = Math.round(newLeft / grid) * grid;
+            newTop = Math.round(newTop / grid) * grid;
+
+            // 边界检查
+            if (newLeft < 0) newLeft = 0;
+            if (newTop < 0) newTop = 0;
+            if (newLeft + newWidth > canvas.offsetWidth) newWidth = canvas.offsetWidth - newLeft;
+            if (newTop + newHeight > canvas.offsetHeight) newHeight = canvas.offsetHeight - newTop;
+
+            part.style.width = newWidth + 'px';
+            part.style.height = newHeight + 'px';
+            part.style.left = newLeft + 'px';
+            part.style.top = newTop + 'px';
+        });
+
+        window.addEventListener('mouseup', () => active = false);
+    });
+}
+
 /* ---------- 双击新建组 ---------- */
-canvas.addEventListener('dblclick',e=>{
+canvas.addEventListener('dblclick', e => {
     const rect = canvas.getBoundingClientRect();
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
-    x = Math.round(x/grid)*grid;
-    y = Math.round(y/grid)*grid;
-    const color = colors[(groupId)%colors.length];
-    createHoleGroup(x,y,color);
-    updateCanvasSizeLabels();
+    x = Math.round(x / grid) * grid;
+    y = Math.round(y / grid) * grid;
+    
+    // 显示选择菜单而不是直接创建
+    showSelectionMenu(x, y);
 });
 
 /* ---------- 初始示例组 ---------- */
