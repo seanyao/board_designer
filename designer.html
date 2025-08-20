@@ -127,6 +127,20 @@
     .resize-handle.ne{top:-4px;right:-4px;cursor:ne-resize;}
     .resize-handle.sw{bottom:-4px;left:-4px;cursor:sw-resize;}
     .resize-handle.se{bottom:-4px;right:-4px;cursor:se-resize;}
+    /* 零件中心尺寸标签 */
+    .part-center-label{
+        position:absolute;
+        font-size:11px;
+        background:rgba(255,255,255,0.9);
+        color:#333;
+        padding:2px 6px;
+        border-radius:3px;
+        pointer-events:none;
+        white-space:nowrap;
+        z-index:15;
+        border:1px solid #999;
+        font-weight:bold;
+    }
 </style>
 </head>
 <body>
@@ -340,6 +354,28 @@ function createPart(x0, y0) {
 
     enablePartDrag(part);
     enablePartResize(part);
+    updatePartCenterLabel(part); // 初始显示中心尺寸标签
+}
+
+/* ---------- 更新零件中心尺寸标签 ---------- */
+function updatePartCenterLabel(part) {
+    // 移除旧的尺寸标签
+    part.querySelectorAll('.part-center-label').forEach(el => el.remove());
+    
+    const width = part.offsetWidth;
+    const height = part.offsetHeight;
+    
+    // 创建中心标签
+    const label = document.createElement('div');
+    label.className = 'part-center-label';
+    label.textContent = `${mm(width)} × ${mm(height)} mm`;
+    
+    // 居中定位
+    label.style.left = '50%';
+    label.style.top = '50%';
+    label.style.transform = 'translate(-50%, -50%)';
+    
+    part.appendChild(label);
 }
 
 /* ---------- 零件拖拽 ---------- */
@@ -369,6 +405,7 @@ function enablePartDrag(part) {
 
         part.style.left = x + 'px';
         part.style.top = y + 'px';
+        updatePartCenterLabel(part); // 拖拽时更新标签位置
     });
 
     window.addEventListener('mouseup', () => active = false);
@@ -437,6 +474,8 @@ function enablePartResize(part) {
             part.style.height = newHeight + 'px';
             part.style.left = newLeft + 'px';
             part.style.top = newTop + 'px';
+            
+            updatePartCenterLabel(part); // 调整大小时更新标签
         });
 
         window.addEventListener('mouseup', () => active = false);
