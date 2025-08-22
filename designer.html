@@ -181,6 +181,17 @@
         white-space:nowrap;
         z-index:12;
     }
+    .measure-point{
+        position:absolute;
+        width:8px;
+        height:8px;
+        border:2px solid #000;
+        background:#fff;
+        border-radius:50%;
+        cursor:grab;
+        transform:translate(-50%,-50%);
+        z-index:13;
+    }
         /* 右键菜单 */
         .context-menu{
         position:fixed;
@@ -291,6 +302,62 @@ const mm = v => Math.round(v * mmPerPx);
 let measures = [];
 let measureCreating = false;
 let pendingMeasureP1 = null;
+
+function clampToCanvas(x,y){
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    return {
+        x: Math.max(0, Math.min(x, w)),
+        y: Math.max(0, Math.min(y, h))
+    };
+}
+
+function removeMeasureStartPreview(){
+    const prev = document.getElementById('measure-start-preview');
+    if(prev && prev.parentNode) prev.parentNode.removeChild(prev);
+}
+
+function renderMeasureStartPreview(){
+    removeMeasureStartPreview();
+    if(!pendingMeasureP1) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'measure-start-preview';
+    wrap.style.position = 'absolute';
+    wrap.style.left = '0';
+    wrap.style.top = '0';
+    canvas.appendChild(wrap);
+
+    const p = document.createElement('div');
+    p.className = 'measure-point';
+    p.style.left = pendingMeasureP1.x + 'px';
+    p.style.top  = pendingMeasureP1.y + 'px';
+    p.style.pointerEvents = 'auto';
+    wrap.appendChild(p);
+
+    // 允许拖拽起点
+    let active = false, ox = 0, oy = 0;
+    p.addEventListener('mousedown', (e)=>{
+        active = true;
+        e.stopPropagation();
+        const rect = canvas.getBoundingClientRect();
+        ox = e.clientX - rect.left - pendingMeasureP1.x;
+        oy = e.clientY - rect.top  - pendingMeasureP1.y;
+        document.body.style.userSelect = 'none';
+    });
+    window.addEventListener('mousemove', (e)=>{
+        if(!active) return;
+        const rect = canvas.getBoundingClientRect();
+        let nx = e.clientX - rect.left - ox;
+        let ny = e.clientY - rect.top  - oy;
+        nx = Math.round(nx / grid) * grid;
+        ny = Math.round(ny / grid) * grid;
+        const clamped = clampToCanvas(nx, ny);
+        pendingMeasureP1 = {x: clamped.x, y: clamped.y};
+        renderMeasureStartPreview();
+    });
+    window.addEventListener('mouseup', ()=>{
+        if(active){ active = false; document.body.style.userSelect = ''; }
+    });
+}
 
 /* ---------- 持久化：保存/加载 ---------- */
 const AUTOSAVE_KEY = 'designer-autosave-v1';
@@ -800,39 +867,99 @@ function enablePartResize(part) {
 
 /* ---------- 长度度量 ---------- */
 function createMeasure(x1,y1,x2,y2){
-    // 保存数据
     const m = { p1:{x:x1,y:y1}, p2:{x:x2,y:y2} };
-    measures.push(m);
+    const idx = measures.push(m) - 1;
+    renderMeasure(idx);
+    scheduleAutosave();
+}
 
-    // DOM 展示
-    const lenPx = Math.hypot(x2-x1, y2-y1);
-    const ang = Math.atan2(y2-y1, x2-x1);
-    const midX = (x1+x2)/2, midY = (y1+y2)/2;
+function renderMeasure(idx){
+    const m = measures[idx];
+    if(!m) return;
+    const id = 'measure-'+idx;
+    let wrap = document.getElementById(id);
+    if(!wrap){
+        wrap = document.createElement('div');
+        wrap.id = id;
+        wrap.style.position = 'absolute';
+        wrap.style.left = '0';
+        wrap.style.top = '0';
+        wrap.style.pointerEvents = 'none';
+        canvas.appendChild(wrap);
+    }
+    wrap.innerHTML = '';
+
+    const {p1, p2} = m;
+    const lenPx = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+    const ang = Math.atan2(p2.y-p1.y, p2.x-p1.x);
+    const midX = (p1.x+p2.x)/2, midY = (p1.y+p2.y)/2;
 
     const line = document.createElement('div');
     line.className = 'measure-line';
-    line.style.left = x1 + 'px';
-    line.style.top = y1 + 'px';
+    line.style.left = p1.x + 'px';
+    line.style.top = p1.y + 'px';
     line.style.width = lenPx + 'px';
     line.style.transform = `rotate(${ang}rad)`;
-    canvas.appendChild(line);
+    wrap.appendChild(line);
 
     const label = document.createElement('div');
     label.className = 'measure-label';
     label.textContent = mm(lenPx) + ' mm';
     label.style.left = midX + 'px';
     label.style.top = midY + 'px';
-    canvas.appendChild(label);
+    wrap.appendChild(label);
 
-    scheduleAutosave();
+    const p1el = document.createElement('div');
+    p1el.className = 'measure-point';
+    p1el.style.left = p1.x + 'px';
+    p1el.style.top = p1.y + 'px';
+    p1el.style.pointerEvents = 'auto';
+    wrap.appendChild(p1el);
+
+    const p2el = document.createElement('div');
+    p2el.className = 'measure-point';
+    p2el.style.left = p2.x + 'px';
+    p2el.style.top = p2.y + 'px';
+    p2el.style.pointerEvents = 'auto';
+    wrap.appendChild(p2el);
+
+    enableMeasurePointDrag(idx, p1el, 'p1');
+    enableMeasurePointDrag(idx, p2el, 'p2');
+}
+
+function enableMeasurePointDrag(idx, handleEl, key){
+    let active = false, ox = 0, oy = 0;
+    handleEl.addEventListener('mousedown', (e)=>{
+        active = true;
+        e.stopPropagation();
+        const rect = canvas.getBoundingClientRect();
+        ox = e.clientX - rect.left - measures[idx][key].x;
+        oy = e.clientY - rect.top  - measures[idx][key].y;
+        document.body.style.userSelect = 'none';
+    });
+    window.addEventListener('mousemove', (e)=>{
+        if(!active) return;
+        const rect = canvas.getBoundingClientRect();
+        let nx = e.clientX - rect.left - ox;
+        let ny = e.clientY - rect.top  - oy;
+        nx = Math.round(nx / grid) * grid;
+        ny = Math.round(ny / grid) * grid;
+        const clamped = clampToCanvas(nx, ny);
+        measures[idx][key] = {x: clamped.x, y: clamped.y};
+        renderMeasure(idx);
+        scheduleAutosave();
+    });
+    window.addEventListener('mouseup', ()=>{
+        if(active){ active = false; document.body.style.userSelect = ''; }
+    });
 }
 
 function startMeasureFromContext(){
     hideContextMenu();
-    // 使用 pendingPosition 作为第一个点
-    if(!pendingPosition) return;
+    // 从用户下一次点击确定起点
     measureCreating = true;
-    pendingMeasureP1 = {x: pendingPosition.x, y: pendingPosition.y};
+    pendingMeasureP1 = null;
+    removeMeasureStartPreview();
 }
 
 canvas.addEventListener('click', (e)=>{
@@ -844,7 +971,9 @@ canvas.addEventListener('click', (e)=>{
     y = Math.round(y / grid) * grid;
     if(!pendingMeasureP1){
         pendingMeasureP1 = {x,y};
+        renderMeasureStartPreview();
     }else{
+        removeMeasureStartPreview();
         createMeasure(pendingMeasureP1.x, pendingMeasureP1.y, x, y);
         measureCreating = false;
         pendingMeasureP1 = null;
@@ -855,6 +984,7 @@ document.addEventListener('keydown', (e)=>{
     if(e.key === 'Escape' && measureCreating){
         measureCreating = false;
         pendingMeasureP1 = null;
+        removeMeasureStartPreview();
     }
 });
 
@@ -866,7 +996,19 @@ canvas.addEventListener('contextmenu', e => {
     x = Math.round(x / grid) * grid;
     y = Math.round(y / grid) * grid;
     e.preventDefault();
-    showSelectionMenu(x, y);
+    // 使用自定义右键菜单（包含“创建长度度量”）
+    pendingPosition = {x, y};
+    showContextMenu(e);
+});
+
+// 点击空白或按 ESC 关闭右键菜单
+document.addEventListener('click', (ev)=>{
+    const menu = document.getElementById('contextMenu');
+    if(!menu) return;
+    if(ev.target && !menu.contains(ev.target)) hideContextMenu();
+});
+document.addEventListener('keydown', (ev)=>{
+    if(ev.key === 'Escape') hideContextMenu();
 });
 
 // 工具栏事件
