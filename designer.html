@@ -241,7 +241,10 @@
     
     <button id="btnClearAutosave">清除自动保存</button>
     <button id="btnRestoreAutosave">恢复自动保存</button>
- </div>
+    <button id="btnUndo">撤销</button>
+    <button id="btnRedo">重做</button>
+    <button id="btnClearAll">清空画布</button>
+</div>
 
 <!-- 右键菜单 -->
 <div class="context-menu" id="contextMenu">
@@ -362,6 +365,9 @@ function renderMeasureStartPreview(){
 /* ---------- 持久化：保存/加载 ---------- */
 const AUTOSAVE_KEY = 'designer-autosave-v1';
 let saveTimer = null;
+let undoStack = [];
+let redoStack = [];
+let isApplyingHistory = false;
 
 function scheduleAutosave(){
     if(saveTimer) clearTimeout(saveTimer);
@@ -433,6 +439,60 @@ function loadState(data){
             if(m && m.p1 && m.p2){ createMeasure(m.p1.x, m.p1.y, m.p2.x, m.p2.y); }
         });
     }
+}
+
+/* ---------- 历史（Undo/Redo） ---------- */
+function pushHistory(){
+    if(isApplyingHistory) return;
+    try{
+        const snapshot = JSON.stringify(serializeState());
+        // 避免与栈顶重复
+        if(undoStack.length === 0 || undoStack[undoStack.length-1] !== snapshot){
+            undoStack.push(snapshot);
+            if(undoStack.length > 100) undoStack.shift();
+            // 清空重做栈
+            redoStack = [];
+        }
+    }catch{}
+}
+
+function applySnapshot(json){
+    isApplyingHistory = true;
+    try{
+        const data = JSON.parse(json);
+        loadState(data);
+    }finally{
+        isApplyingHistory = false;
+    }
+}
+
+function undo(){
+    if(undoStack.length <= 1) return; // 至少保留初始态
+    const current = JSON.stringify(serializeState());
+    redoStack.push(current);
+    const prev = undoStack[undoStack.length-2];
+    undoStack.pop();
+    applySnapshot(prev);
+    scheduleAutosave();
+}
+
+function redo(){
+    if(redoStack.length === 0) return;
+    const next = redoStack.pop();
+    const current = JSON.stringify(serializeState());
+    undoStack.push(current);
+    applySnapshot(next);
+    scheduleAutosave();
+}
+
+function clearAll(){
+    clearCanvas();
+    groupId = 0;
+    partId = 0;
+    measures = [];
+    removeMeasureStartPreview && removeMeasureStartPreview();
+    pushHistory();
+    scheduleAutosave();
 }
 
 function exportToFile(){
@@ -525,6 +585,7 @@ function createHoleGroup(x0,y0,color){
     updateGroup(group);
     enableDrag(group);
     scheduleAutosave();
+    pushHistory();
 }
 
 /* ---------- 更新连线、标签 ---------- */
@@ -637,6 +698,7 @@ function enableDrag(group){
             if(groupEl && confirm('Confirm to delete this group？')){
                 groupEl.remove();
                 scheduleAutosave();
+                pushHistory();
             }
         });
 
@@ -656,6 +718,7 @@ function enableDrag(group){
             hole.style.top  = y + 'px';
             updateGroup(group);           // 重新画线
             scheduleAutosave();
+            pushHistory();
         });
 
         window.addEventListener('mouseup', ()=> active = false);
@@ -723,6 +786,7 @@ function createPart(x0, y0) {
     enablePartResize(part);
     updatePartCenterLabel(part); // 初始显示中心尺寸标签
     scheduleAutosave();
+    pushHistory();
 }
 
 /* ---------- 更新零件中心尺寸标签 ---------- */
@@ -775,6 +839,7 @@ function enablePartDrag(part) {
         part.style.top = y + 'px';
         updatePartCenterLabel(part); // 拖拽时更新标签位置
         scheduleAutosave();
+        pushHistory();
     });
 
     window.addEventListener('mouseup', () => active = false);
@@ -859,6 +924,7 @@ function enablePartResize(part) {
             
             updatePartCenterLabel(part); // 调整大小时更新标签
             scheduleAutosave();
+            pushHistory();
         });
 
         window.addEventListener('mouseup', () => active = false);
@@ -871,6 +937,7 @@ function createMeasure(x1,y1,x2,y2){
     const idx = measures.push(m) - 1;
     renderMeasure(idx);
     scheduleAutosave();
+    pushHistory();
 }
 
 function renderMeasure(idx){
@@ -948,6 +1015,7 @@ function enableMeasurePointDrag(idx, handleEl, key){
         measures[idx][key] = {x: clamped.x, y: clamped.y};
         renderMeasure(idx);
         scheduleAutosave();
+        pushHistory();
     });
     window.addEventListener('mouseup', ()=>{
         if(active){ active = false; document.body.style.userSelect = ''; }
@@ -1028,6 +1096,9 @@ document.getElementById('btnRestoreAutosave').addEventListener('click', ()=>{
     if(!raw){ alert('没有可恢复的自动保存'); return; }
     try{ loadState(JSON.parse(raw)); }catch{ alert('自动保存数据损坏'); }
 });
+document.getElementById('btnUndo').addEventListener('click', undo);
+document.getElementById('btnRedo').addEventListener('click', redo);
+document.getElementById('btnClearAll').addEventListener('click', clearAll);
 
 /* ---------- 初始示例组（位置对齐到 5 mm 网格） ---------- */
 createHoleGroup(2*grid,2*grid,colors[0]);
@@ -1039,6 +1110,9 @@ try{
     const raw = localStorage.getItem(AUTOSAVE_KEY);
     if(raw){ loadState(JSON.parse(raw)); }
 }catch{}
+
+// 初始化历史栈（记录初始状态）
+pushHistory();
 </script>
 </body>
 </html>
