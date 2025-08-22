@@ -128,6 +128,21 @@
     .resize-handle.ne{top:-4px;right:-4px;cursor:ne-resize;}
     .resize-handle.sw{bottom:-4px;left:-4px;cursor:sw-resize;}
     .resize-handle.se{bottom:-4px;right:-4px;cursor:se-resize;}
+    /* 边缘拖拽手柄（用于零件与孔位组） */
+    .edge-handle{
+        position:absolute;
+        width:2px;
+        height:2px;
+        background:#fff;
+        border:1px solid #333;
+        border-radius:2px;
+        cursor:pointer;
+        z-index:12;
+    }
+    .edge-handle.n{top:-5px;left:50%;transform:translateX(-50%);cursor:n-resize;}
+    .edge-handle.s{bottom:-5px;left:50%;transform:translateX(-50%);cursor:s-resize;}
+    .edge-handle.w{left:-5px;top:50%;transform:translateY(-50%);cursor:w-resize;}
+    .edge-handle.e{right:-5px;top:50%;transform:translateY(-50%);cursor:e-resize;}
     /* 零件中心尺寸标签 */
     .part-center-label{
         position:absolute;
@@ -305,10 +320,11 @@ function createHoleGroup(x0,y0,color){
 /* ---------- 更新连线、标签 ---------- */
 function updateGroup(group){
     const holes = Array.from(group.children);
-    const pts   = holes.map(h=>({x:h.offsetLeft,y:h.offsetTop}));
+    const holeNodes = holes.filter(h=>h.classList.contains('m3-hole'));
+    const pts   = holeNodes.map(h=>({x:h.offsetLeft,y:h.offsetTop, el:h}));
 
     /* 移除旧元素 */
-    group.querySelectorAll('.edge,.edge-label').forEach(el=>el.remove());
+    group.querySelectorAll('.edge,.edge-label,.edge-handle').forEach(el=>el.remove());
 
     /* 边与标签 */
     for(let i=0;i<4;i++){
@@ -331,6 +347,65 @@ function updateGroup(group){
         lab.style.left=midX+'px'; lab.style.top=midY+'px';
         group.appendChild(lab);
     }
+
+    // 计算当前矩形边界（假定四孔为矩形四角）
+    const minX = Math.min(...pts.map(p=>p.x));
+    const maxX = Math.max(...pts.map(p=>p.x));
+    const minY = Math.min(...pts.map(p=>p.y));
+    const maxY = Math.max(...pts.map(p=>p.y));
+
+    // 在四边添加边缘手柄
+    const addEdgeHandle = (dir, left, top) => {
+        const eh = document.createElement('div');
+        eh.className = `edge-handle ${dir}`;
+        eh.style.left = left + 'px';
+        eh.style.top = top + 'px';
+        group.appendChild(eh);
+
+        let active=false, startX=0, startY=0, sMinX=minX, sMaxX=maxX, sMinY=minY, sMaxY=maxY;
+        eh.addEventListener('mousedown', e=>{
+            active=true; e.stopPropagation();
+            startX = e.clientX; startY = e.clientY;
+            sMinX = minX; sMaxX = maxX; sMinY = minY; sMaxY = maxY;
+        });
+        window.addEventListener('mousemove', e=>{
+            if(!active) return;
+            const rect = canvas.getBoundingClientRect();
+            const dx = Math.round((e.clientX - startX) / grid) * grid;
+            const dy = Math.round((e.clientY - startY) / grid) * grid;
+
+            let nMinX = sMinX, nMaxX = sMaxX, nMinY = sMinY, nMaxY = sMaxY;
+            if(dir==='e') nMaxX = Math.min(canvas.clientWidth, sMaxX + dx);
+            if(dir==='w') nMinX = Math.max(0, sMinX + dx);
+            if(dir==='s') nMaxY = Math.min(canvas.clientHeight, sMaxY + dy);
+            if(dir==='n') nMinY = Math.max(0, sMinY + dy);
+
+            // 更新四个角孔位，保持矩形
+            const tl = {x:nMinX, y:nMinY};
+            const tr = {x:nMaxX, y:nMinY};
+            const br = {x:nMaxX, y:nMaxY};
+            const bl = {x:nMinX, y:nMaxY};
+
+            // 将四个 m3-hole 重新定位到上述角点（按照原四个的顺序设置）
+            if(holeNodes.length===4){
+                holeNodes[0].style.left = tl.x + 'px';
+                holeNodes[0].style.top  = tl.y + 'px';
+                holeNodes[1].style.left = tr.x + 'px';
+                holeNodes[1].style.top  = tr.y + 'px';
+                holeNodes[2].style.left = br.x + 'px';
+                holeNodes[2].style.top  = br.y + 'px';
+                holeNodes[3].style.left = bl.x + 'px';
+                holeNodes[3].style.top  = bl.y + 'px';
+            }
+            updateGroup(group);
+        });
+        window.addEventListener('mouseup', ()=> active=false);
+    };
+
+    addEdgeHandle('n', (minX+maxX)/2, minY);
+    addEdgeHandle('e', maxX, (minY+maxY)/2);
+    addEdgeHandle('s', (minX+maxX)/2, maxY);
+    addEdgeHandle('w', minX, (minY+maxY)/2);
 }
 
 /* ---------- 单孔拖拽 ---------- */
@@ -423,6 +498,14 @@ function createPart(x0, y0) {
         const handle = document.createElement('div');
         handle.className = `resize-handle ${pos}`;
         part.appendChild(handle);
+    });
+
+    // 边缘手柄（上右下左）
+    const edgeDirs = ['n','e','s','w'];
+    edgeDirs.forEach(dir=>{
+        const eh = document.createElement('div');
+        eh.className = `edge-handle ${dir}`;
+        part.appendChild(eh);
     });
 
     enablePartDrag(part);
@@ -529,6 +612,19 @@ function enablePartResize(part) {
                 newHeight = Math.max(20, startHeight - deltaY);
                 newLeft = startLeft + startWidth - newWidth;
                 newTop = startTop + startHeight - newHeight;
+            } else if (handle.classList.contains('edge-handle')) {
+                // 边缘手柄：n/e/s/w
+                if (handle.classList.contains('e')) {
+                    newWidth = Math.max(20, startWidth + deltaX);
+                } else if (handle.classList.contains('w')) {
+                    newWidth = Math.max(20, startWidth - deltaX);
+                    newLeft = startLeft + startWidth - newWidth;
+                } else if (handle.classList.contains('s')) {
+                    newHeight = Math.max(20, startHeight + deltaY);
+                } else if (handle.classList.contains('n')) {
+                    newHeight = Math.max(20, startHeight - deltaY);
+                    newTop = startTop + startHeight - newHeight;
+                }
             }
 
             // 网格对齐
