@@ -143,19 +143,43 @@
     .edge-handle.s{bottom:-5px;left:50%;transform:translateX(-50%);cursor:s-resize;}
     .edge-handle.w{left:-5px;top:50%;transform:translateY(-50%);cursor:w-resize;}
     .edge-handle.e{right:-5px;top:50%;transform:translateY(-50%);cursor:e-resize;}
-    /* 零件中心尺寸标签 */
-    .part-center-label{
+
+    /* 工具栏 */
+    .toolbar{
         position:absolute;
-        font-size:11px;
-        background:rgba(255,255,255,0.9);
-        color:#333;
-        padding:2px 6px;
-        border-radius:3px;
+        top:6px;
+        left:6px;
+        z-index:2000;
+        display:flex;
+        gap:6px;
+    }
+    .toolbar button{
+        padding:4px 8px;
+        font-size:12px;
+        border:1px solid #bbb;
+        border-radius:4px;
+        background:#fff;
+        cursor:pointer;
+    }
+    .toolbar button:hover{background:#f3f3f3}
+    /* 长度度量 */
+    .measure-line{
+        position:absolute;
+        pointer-events:none;
+        border-top:1px dashed #000;
+        transform-origin:left top;
+        z-index:11;
+    }
+    .measure-label{
+        position:absolute;
+        font-size:10px;
+        background:rgba(0,0,0,.75);
+        color:#fff;
+        padding:1px 3px;
+        border-radius:2px;
         pointer-events:none;
         white-space:nowrap;
-        z-index:15;
-        border:1px solid #999;
-        font-weight:bold;
+        z-index:12;
     }
         /* 右键菜单 */
         .context-menu{
@@ -197,10 +221,22 @@
     <button onclick="closeSelectionMenu()">取消</button>
 </div>
 
+<!-- 工具栏：保存/加载 -->
+<div class="toolbar">
+    <button id="btnSaveFile">保存到文件</button>
+    <button id="btnLoadFile">从文件加载</button>
+    <input id="fileLoader" type="file" accept="application/json" style="display:none" />
+    <span id="saveHint" style="font-size:11px;color:#666;align-self:center"></span>
+    
+    <button id="btnClearAutosave">清除自动保存</button>
+    <button id="btnRestoreAutosave">恢复自动保存</button>
+ </div>
+
 <!-- 右键菜单 -->
 <div class="context-menu" id="contextMenu">
     <div class="context-menu-item" onclick="createHoleGroupFromContext()">创建孔位组</div>
     <div class="context-menu-item" onclick="createPartFromContext()">创建零件</div>
+    <div class="context-menu-item" onclick="startMeasureFromContext()">创建长度度量</div>
 </div>
 
 <script>
@@ -251,9 +287,115 @@ let groupId   = 0;                    // 组计数
 let partId    = 0;                    // 零件计数
 let pendingPosition = null;           // 待创建位置
 const colors  = ['#e00','#007bff','#28a745','#fd7e14','#6f42c1','#20c997']; // 循环色
-
-/* ---------- 工具 ---------- */
 const mm = v => Math.round(v * mmPerPx);
+let measures = [];
+let measureCreating = false;
+let pendingMeasureP1 = null;
+
+/* ---------- 持久化：保存/加载 ---------- */
+const AUTOSAVE_KEY = 'designer-autosave-v1';
+let saveTimer = null;
+
+function scheduleAutosave(){
+    if(saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{
+        const data = serializeState();
+        try{
+            localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
+            const hint = document.getElementById('saveHint');
+            if(hint){ hint.textContent = '已自动保存'; setTimeout(()=>{hint.textContent='';}, 1200); }
+        }catch(err){ /* ignore quota errors */ }
+    }, 300);
+}
+
+function serializeState(){
+    const groups = Array.from(canvas.querySelectorAll('.hole-group')).map(group=>{
+        const holes = Array.from(group.querySelectorAll('.m3-hole')).map(h=>({
+            x: h.offsetLeft,
+            y: h.offsetTop
+        }));
+        return { color: group.dataset.color || '#000', holes };
+    });
+    const parts = Array.from(canvas.querySelectorAll('.part-rectangle')).map(p=>({
+        left: p.offsetLeft,
+        top: p.offsetTop,
+        width: p.offsetWidth,
+        height: p.offsetHeight
+    }));
+    return { groups, parts, measures };
+}
+
+function clearCanvas(){
+    Array.from(canvas.children).forEach(ch=>ch.remove());
+}
+
+function loadState(data){
+    clearCanvas();
+    groupId = 0; partId = 0; measures = [];
+    if(data && Array.isArray(data.groups)){
+        data.groups.forEach(g=>{
+            // 创建占位组，再精确设置孔位坐标
+            if(g.holes && g.holes[0]){
+                const color = g.color || colors[(groupId)%colors.length];
+                createHoleGroup(g.holes[0].x, g.holes[0].y, color);
+                const group = canvas.lastElementChild;
+                const holes = Array.from(group.querySelectorAll('.m3-hole'));
+                g.holes.slice(0,4).forEach((pt, idx)=>{
+                    if(holes[idx]){
+                        holes[idx].style.left = pt.x + 'px';
+                        holes[idx].style.top  = pt.y + 'px';
+                    }
+                });
+                updateGroup(group);
+            }
+        });
+    }
+    if(data && Array.isArray(data.parts)){
+        data.parts.forEach(p=>{
+            createPart(p.left, p.top);
+            const el = canvas.querySelector('.part-rectangle:last-of-type');
+            if(el){
+                el.style.width = p.width + 'px';
+                el.style.height = p.height + 'px';
+                updatePartCenterLabel(el);
+            }
+        });
+    }
+    if(data && Array.isArray(data.measures)){
+        data.measures.forEach(m=>{
+            if(m && m.p1 && m.p2){ createMeasure(m.p1.x, m.p1.y, m.p2.x, m.p2.y); }
+        });
+    }
+}
+
+function exportToFile(){
+    const data = serializeState();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    const now = new Date();
+    const ts = now.getFullYear()+
+        String(now.getMonth()+1).padStart(2,'0')+
+        String(now.getDate()).padStart(2,'0')+'-'+
+        String(now.getHours()).padStart(2,'0')+
+        String(now.getMinutes()).padStart(2,'0')+
+        String(now.getSeconds()).padStart(2,'0');
+    a.download = `design-${ts}.json`;
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function importFromFile(file){
+    const reader = new FileReader();
+    reader.onload = () => {
+        try{
+            const data = JSON.parse(reader.result);
+            loadState(data);
+            scheduleAutosave();
+        }catch(err){ alert('文件格式不正确'); }
+    };
+    reader.readAsText(file);
+}
 
 /* ---------- 外框尺寸标签 ---------- */
 function updateCanvasSizeLabels(){
@@ -315,6 +457,7 @@ function createHoleGroup(x0,y0,color){
 
     updateGroup(group);
     enableDrag(group);
+    scheduleAutosave();
 }
 
 /* ---------- 更新连线、标签 ---------- */
@@ -370,7 +513,6 @@ function updateGroup(group){
         });
         window.addEventListener('mousemove', e=>{
             if(!active) return;
-            const rect = canvas.getBoundingClientRect();
             const dx = Math.round((e.clientX - startX) / grid) * grid;
             const dy = Math.round((e.clientY - startY) / grid) * grid;
 
@@ -386,7 +528,6 @@ function updateGroup(group){
             const br = {x:nMaxX, y:nMaxY};
             const bl = {x:nMinX, y:nMaxY};
 
-            // 将四个 m3-hole 重新定位到上述角点（按照原四个的顺序设置）
             if(holeNodes.length===4){
                 holeNodes[0].style.left = tl.x + 'px';
                 holeNodes[0].style.top  = tl.y + 'px';
@@ -398,6 +539,7 @@ function updateGroup(group){
                 holeNodes[3].style.top  = bl.y + 'px';
             }
             updateGroup(group);
+            scheduleAutosave();
         });
         window.addEventListener('mouseup', ()=> active=false);
     };
@@ -427,6 +569,7 @@ function enableDrag(group){
             const groupEl = hole.closest('.hole-group');
             if(groupEl && confirm('Confirm to delete this group？')){
                 groupEl.remove();
+                scheduleAutosave();
             }
         });
 
@@ -445,6 +588,7 @@ function enableDrag(group){
             hole.style.left = x + 'px';
             hole.style.top  = y + 'px';
             updateGroup(group);           // 重新画线
+            scheduleAutosave();
         });
 
         window.addEventListener('mouseup', ()=> active = false);
@@ -511,6 +655,7 @@ function createPart(x0, y0) {
     enablePartDrag(part);
     enablePartResize(part);
     updatePartCenterLabel(part); // 初始显示中心尺寸标签
+    scheduleAutosave();
 }
 
 /* ---------- 更新零件中心尺寸标签 ---------- */
@@ -562,6 +707,7 @@ function enablePartDrag(part) {
         part.style.left = x + 'px';
         part.style.top = y + 'px';
         updatePartCenterLabel(part); // 拖拽时更新标签位置
+        scheduleAutosave();
     });
 
     window.addEventListener('mouseup', () => active = false);
@@ -645,25 +791,112 @@ function enablePartResize(part) {
             part.style.top = newTop + 'px';
             
             updatePartCenterLabel(part); // 调整大小时更新标签
+            scheduleAutosave();
         });
 
         window.addEventListener('mouseup', () => active = false);
     });
 }
 
-/* ---------- 右键新建 ---------- */
-canvas.addEventListener('contextmenu', showContextMenu);
+/* ---------- 长度度量 ---------- */
+function createMeasure(x1,y1,x2,y2){
+    // 保存数据
+    const m = { p1:{x:x1,y:y1}, p2:{x:x2,y:y2} };
+    measures.push(m);
 
-// 点击其他地方隐藏右键菜单
-document.addEventListener('click', hideContextMenu);
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideContextMenu();
+    // DOM 展示
+    const lenPx = Math.hypot(x2-x1, y2-y1);
+    const ang = Math.atan2(y2-y1, x2-x1);
+    const midX = (x1+x2)/2, midY = (y1+y2)/2;
+
+    const line = document.createElement('div');
+    line.className = 'measure-line';
+    line.style.left = x1 + 'px';
+    line.style.top = y1 + 'px';
+    line.style.width = lenPx + 'px';
+    line.style.transform = `rotate(${ang}rad)`;
+    canvas.appendChild(line);
+
+    const label = document.createElement('div');
+    label.className = 'measure-label';
+    label.textContent = mm(lenPx) + ' mm';
+    label.style.left = midX + 'px';
+    label.style.top = midY + 'px';
+    canvas.appendChild(label);
+
+    scheduleAutosave();
+}
+
+function startMeasureFromContext(){
+    hideContextMenu();
+    // 使用 pendingPosition 作为第一个点
+    if(!pendingPosition) return;
+    measureCreating = true;
+    pendingMeasureP1 = {x: pendingPosition.x, y: pendingPosition.y};
+}
+
+canvas.addEventListener('click', (e)=>{
+    if(!measureCreating) return;
+    const rect = canvas.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    x = Math.round(x / grid) * grid;
+    y = Math.round(y / grid) * grid;
+    if(!pendingMeasureP1){
+        pendingMeasureP1 = {x,y};
+    }else{
+        createMeasure(pendingMeasureP1.x, pendingMeasureP1.y, x, y);
+        measureCreating = false;
+        pendingMeasureP1 = null;
+    }
+}, true);
+
+document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && measureCreating){
+        measureCreating = false;
+        pendingMeasureP1 = null;
+    }
+});
+
+/* ---------- 右键新建 ---------- */
+canvas.addEventListener('contextmenu', e => {
+    const rect = canvas.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
+    x = Math.round(x / grid) * grid;
+    y = Math.round(y / grid) * grid;
+    e.preventDefault();
+    showSelectionMenu(x, y);
+});
+
+// 工具栏事件
+document.getElementById('btnSaveFile').addEventListener('click', exportToFile);
+document.getElementById('btnLoadFile').addEventListener('click', ()=> document.getElementById('fileLoader').click());
+document.getElementById('fileLoader').addEventListener('change', (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if(file) importFromFile(file);
+    e.target.value = '';
+});
+document.getElementById('btnClearAutosave').addEventListener('click', ()=>{
+    localStorage.removeItem(AUTOSAVE_KEY);
+    alert('已清除自动保存');
+});
+document.getElementById('btnRestoreAutosave').addEventListener('click', ()=>{
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if(!raw){ alert('没有可恢复的自动保存'); return; }
+    try{ loadState(JSON.parse(raw)); }catch{ alert('自动保存数据损坏'); }
 });
 
 /* ---------- 初始示例组（位置对齐到 5 mm 网格） ---------- */
 createHoleGroup(2*grid,2*grid,colors[0]);
 updateCanvasSizeLabels();
 window.addEventListener('resize', updateCanvasSizeLabels);
+
+// 首次加载尝试恢复自动保存
+try{
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if(raw){ loadState(JSON.parse(raw)); }
+}catch{}
 </script>
 </body>
 </html>
