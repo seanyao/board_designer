@@ -113,6 +113,7 @@
         border:2px solid #666;
         cursor:move;
         user-select:none;
+        box-sizing:border-box; /* 保证宽高包含边框，避免 41×31mm */
     }
     /* 零件调整手柄 */
     .resize-handle{
@@ -278,12 +279,13 @@ function createHoleGroup(x0,y0,color){
     group.dataset.color = color;
     canvas.appendChild(group);
 
-    /* 初始 4 个孔位（顺时针） */
+    /* 初始 4 个孔位（顺时针，边长为 20 mm，5 mm 的整数倍） */
+    const step = 4 * grid; // 4 * 5mm = 20mm
     const pts = [
-        {x:x0,      y:y0},
-        {x:x0+40,   y:y0},
-        {x:x0+40,   y:y0+40},
-        {x:x0,      y:y0+40}
+        {x:x0,           y:y0},
+        {x:x0+step,      y:y0},
+        {x:x0+step,      y:y0+step},
+        {x:x0,           y:y0+step}
     ];
     pts.forEach((p,i)=>{
         const h = document.createElement('div');
@@ -410,8 +412,9 @@ function createPart(x0, y0) {
     part.id = 'p' + pid;
     part.style.left = x0 + 'px';
     part.style.top = y0 + 'px';
-    part.style.width = '60px';
-    part.style.height = '40px';
+    // 默认尺寸为 40 mm × 30 mm（5 mm 的整数倍）
+    part.style.width = (8 * grid) + 'px';   // 8 * 5mm = 40mm
+    part.style.height = (6 * grid) + 'px';  // 6 * 5mm = 30mm
     canvas.appendChild(part);
 
     // 添加调整手柄
@@ -561,8 +564,8 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') hideContextMenu();
 });
 
-/* ---------- 初始示例组 ---------- */
-createHoleGroup(20,20,colors[0]);
+/* ---------- 初始示例组（位置对齐到 5 mm 网格） ---------- */
+createHoleGroup(2*grid,2*grid,colors[0]);
 updateCanvasSizeLabels();
 window.addEventListener('resize', updateCanvasSizeLabels);
 </script>
