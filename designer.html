@@ -17,7 +17,7 @@
             linear-gradient(#ddd 1px,transparent 1px),
             linear-gradient(90deg,#ddd 1px,transparent 1px);
         background-size:5mm 5mm;
-        overflow:hidden;
+        overflow:visible;
     }
     /* 单组孔位容器 */
     .hole-group{position:absolute;top:0;left:0;cursor:move}
@@ -27,6 +27,7 @@
         width:6mm;
         height:6mm;
         border-radius:50%;
+        background:radial-gradient(circle, #fff 0 1.5mm, #e00 1.5mm 3mm);
         transform:translate(-50%,-50%);
         user-select:none;
         display:flex;
@@ -179,13 +180,13 @@
         border-radius:2px;
         pointer-events:none;
         white-space:nowrap;
-        z-index:12;
+        z-index:9999;
     }
     .measure-point{
         position:absolute;
-        width:8px;
-        height:8px;
-        border:2px solid #000;
+        width:2px;
+        height:2px;
+        border:1px solid #000;
         background:#fff;
         border-radius:50%;
         cursor:grab;
@@ -215,6 +216,9 @@
     }
     .context-menu-item:hover{
         background:#f5f5f5;
+    }
+    .user-text {
+        pointer-events: auto;
     }
 
 </style>
@@ -251,6 +255,7 @@
     <div class="context-menu-item" onclick="createHoleGroupFromContext()">创建孔位组</div>
     <div class="context-menu-item" onclick="createPartFromContext()">创建零件</div>
     <div class="context-menu-item" onclick="startMeasureFromContext()">创建长度度量</div>
+    <div class="context-menu-item" onclick="startMeasureFromContext()">添加文字</div>
 </div>
 
 <script>
@@ -276,6 +281,41 @@ function hideContextMenu() {
     document.getElementById('contextMenu').style.display = 'none';
 }
 
+function addTextFromContext() {
+    hideContextMenu();          // 先关掉菜单
+    // 必须等菜单完全关闭后再弹 prompt，否则 Chrome 会拦截
+    setTimeout(() => {
+        // 容错：如果右键时没点中空白，pendingPosition 为空，用 (0,0)
+        const x = pendingPosition?.x ?? 0;
+        const y = pendingPosition?.y ?? 0;
+        const text = prompt('请输入文字：');
+        if (text) addText(x, y, text);
+    }, 0);
+}
+
+function addText(x, y, content) {
+    const span = document.createElement('span');
+    span.className = 'user-text';
+    span.textContent = content;
+    span.style.position = 'absolute';
+    span.style.left = x + 'px';
+    span.style.top  = y + 'px';
+    span.style.fontSize = '11px';
+    span.style.color = '#000';
+    span.style.cursor = 'pointer';
+    span.style.zIndex = 9999;
+    span.style.transform = 'translate(-50%, -50%)';
+    span.style.userSelect = 'none';
+
+    span.addEventListener('dblclick', () => {
+        if (confirm('删除文字？')) span.remove();
+    });
+
+    canvas.appendChild(span);
+    scheduleAutosave();
+    pushHistory();
+}
+
 function createHoleGroupFromContext() {
     if (pendingPosition) {
         const color = colors[(groupId) % colors.length];
@@ -296,7 +336,7 @@ function createPartFromContext() {
 const canvas   = document.getElementById('canvas');
 const wrapper  = document.querySelector('.wrapper');
 const mmPerPx = 25.4 / 96;
-const grid    = 5 / mmPerPx;          // 5 mm 网格
+const grid    = 1 / mmPerPx;          // 5 mm 网格
 let groupId   = 0;                    // 组计数
 let partId    = 0;                    // 零件计数
 let pendingPosition = null;           // 待创建位置
@@ -821,6 +861,15 @@ function enablePartDrag(part) {
         const rect = canvas.getBoundingClientRect();
         ox = e.clientX - rect.left - part.offsetLeft;
         oy = e.clientY - rect.top - part.offsetTop;
+    });
+
+    part.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        if (confirm('Confirm to delete this part？')) {
+            part.remove();
+            scheduleAutosave();
+            pushHistory();
+        }
     });
 
     window.addEventListener('mousemove', e => {
